@@ -1,0 +1,22 @@
+{
+  "rgb_only_without_generation_labels": true,
+  "changed_input_recomputed": true,
+  "train_val_test_layout_disjoint": true,
+  "train_layouts": 47,
+  "validation_layouts": 9,
+  "test_layouts": 12,
+  "model": {
+    "checkpoint_sha256": "6bf6be785b8bff890259f651f0ea40c51d2acf2b8a066c9445e9c9af73853405",
+    "trained_steps": 1600,
+    "parameters": 76448,
+    "validation": {
+      "augmentation_matching_accuracy": 0.4716796875,
+      "feature_std": 0.10700361058115959
+    }
+  },
+  "cpu_sample_seconds": 2.0774807919951854,
+  "sample_size": [
+    2222,
+    1023
+  ]
+}
