@@ -307,13 +307,13 @@ function App() {
   const report = job?.result?.report;
   // Headless generator uses the exact same renderer and sweep as the visible app.
   useEffect(() => {
-    (window as any).shelfStitch = {
+    (window as any).tinyStitch = {
       generate: (newSeed: number, options: number | SweepOptions = 9) =>
         makeSweep(renderer.current!, newSeed, options),
       plan: createSweepPlan,
     };
     return () => {
-      delete (window as any).shelfStitch;
+      delete (window as any).tinyStitch;
     };
   }, []);
   return (
@@ -325,7 +325,7 @@ function App() {
           </span>
           <div>
             <strong>
-              tinyLayout <span>/ shelfStitch</span>
+              tinyLayout <span>/ tinyStitch</span>
             </strong>
             <small>货架序列图片拼接实验</small>
           </div>

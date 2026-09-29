@@ -44,10 +44,10 @@ const browser = await chromium.launch({
 const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
 try {
   await page.goto(args.url || "http://127.0.0.1:5180");
-  await page.waitForFunction(() => window.shelfStitch);
+  await page.waitForFunction(() => window.tinyStitch);
   for (let i = 0; i < count; i++) {
     const sample = await page.evaluate(
-      ({ seed, options }) => window.shelfStitch.generate(seed, options),
+      ({ seed, options }) => window.tinyStitch.generate(seed, options),
       { seed: seed + i, options },
     );
     const dest = count === 1 ? output : path.join(output, String(seed + i));

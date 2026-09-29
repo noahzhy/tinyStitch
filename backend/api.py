@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .stitch import stitch, load_image
 
 DATA = Path(
-    os.environ.get("SHELFSTITCH_DATA", Path(__file__).resolve().parents[1] / "data")
+    os.environ.get("tinyStitch_DATA", Path(__file__).resolve().parents[1] / "data")
 ).resolve()
 for subdir in ["inputs", "jobs", "results"]:
     (DATA / subdir).mkdir(parents=True, exist_ok=True)
@@ -31,7 +31,7 @@ for path in (DATA / "jobs").glob("*.json"):
     if saved["status"] in {"queued", "running"}:
         saved.update(status="interrupted", message="服务重启，请重新拼接")
         path.write_text(json.dumps(saved, ensure_ascii=False))
-app = FastAPI(title="shelfStitch 货架拼图", version="0.1.0")
+app = FastAPI(title="tinyStitch 货架拼图", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://127.0.0.1:5180", "http://localhost:5180"],

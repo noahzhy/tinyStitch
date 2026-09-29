@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import assert from "node:assert/strict";
 const out = path.resolve(
-  process.env.SHELFSTITCH_QA_OUTPUT || "examples/validation",
+  process.env.tinyStitch_QA_OUTPUT || "examples/validation",
 );
 await fs.mkdir(out, { recursive: true });
 const browser = await chromium.launch({
@@ -27,7 +27,7 @@ page.on("request", (r) => {
 });
 try {
   await page.goto("http://127.0.0.1:5180");
-  await page.waitForFunction(() => window.shelfStitch);
+  await page.waitForFunction(() => window.tinyStitch);
   await page.getByText("拼接服务就绪").waitFor();
   await page.getByLabel("货架长度模式").selectOption("custom");
   await page.getByLabel("货架长度", { exact: true }).fill("6");

@@ -79,7 +79,7 @@ def test_exif_and_resize(tmp_path):
 
 
 def test_api_rgb_only_actual_job(tmp_path):
-    os.environ["SHELFSTITCH_DATA"] = str(tmp_path / "service")
+    os.environ["tinyStitch_DATA"] = str(tmp_path / "service")
     from backend.api import app
     from fastapi.testclient import TestClient
 

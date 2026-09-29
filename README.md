@@ -1,4 +1,4 @@
-# shelfStitch：货架序列图片拼接
+# tinyStitch：货架序列图片拼接
 
 独立子项目，处理**单个货架一侧正面**的连续照片。复用 tinyLayout 的程序化商店几何和 Three.js 渲染器，自动生成沿货架横向移动的重叠 RGB 图片；也支持用户 JPG、PNG、WebP 文件。自动匹配、对齐和融合，导出 PNG、JPG、诊断 JSON，不要求手动选择匹配点。
 
@@ -13,7 +13,7 @@ Node.js 20+、Python 3.12。模拟批量采样和网页验收还需要本机 Chr
 ```bash
 # 在 tinyLayout 根目录
 npm ci
-cd shelfStitch
+cd tinyStitch
 npm ci
 uv --native-tls sync --frozen --extra test --python 3.12
 bash scripts/dev.sh
@@ -24,7 +24,7 @@ bash scripts/dev.sh
 分别运行：
 
 ```bash
-# 在 shelfStitch 目录
+# 在 tinyStitch 目录
 .venv/bin/python -m uvicorn backend.api:app --host 127.0.0.1 --port 8010
 npm run dev
 ```
@@ -75,7 +75,7 @@ flowchart LR
 ```
 
 ```bash
-# 在 shelfStitch 目录；网页运行后复用同一个渲染器
+# 在 tinyStitch 目录；网页运行后复用同一个渲染器
 node scripts/generate.mjs --seed=910000 --count=56 --output=data/jepa-source
 .venv/bin/python scripts/train_jepa.py --data=data/jepa-source --steps=1600 --batch=4
 # 完整 checkpoint 保存优化器与 CPU / MPS RNG，可中断恢复
@@ -89,7 +89,7 @@ node scripts/generate.mjs --seed=910000 --count=56 --output=data/jepa-source
 ## 命令行与验证
 
 ```bash
-# 在 shelfStitch 目录，按文件名顺序实际计算
+# 在 tinyStitch 目录，按文件名顺序实际计算
 .venv/bin/python -m backend.stitch examples/simulated/rgb --output=data/my-panorama --method=jepa
 
 # 网页运行后生成同一渲染器的样本
@@ -120,7 +120,7 @@ npm run test:e2e
 | `GET /api/inputs/{id}/download` | 原始 RGB ZIP |
 | `GET /api/files/{id}/panorama.png` | PNG 拼图，JPG/报告同目录 |
 
-数据默认在子项目 `data/`，可通过 `SHELFSTITCH_DATA` 指定独立目录。项目沿用上一级 Apache-2.0 许可，依赖保留各自许可证。
+数据默认在子项目 `data/`，可通过 `tinyStitch_DATA` 指定独立目录。项目沿用上一级 Apache-2.0 许可，依赖保留各自许可证。
 
 ## 本次实际实验结果
 
