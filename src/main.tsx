@@ -13,8 +13,8 @@ import {
   Square,
   Image as ImageIcon,
 } from "lucide-react";
-import { StoreRenderer } from "../../src/sim/renderer";
-import { generateStore } from "../../src/sim/store";
+import { StoreRenderer } from "./sim/renderer";
+import { generateStore } from "./sim/store";
 import { makeSweep, type Sweep } from "./simulator";
 import { createSweepPlan, type SweepOptions } from "./sweep";
 import "./style.css";

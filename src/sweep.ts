@@ -1,5 +1,5 @@
-import { generateStore, free, rng } from "../../src/sim/store";
-import type { Store, Shelf } from "../../src/types";
+import { generateStore, free, rng } from "./sim/store";
+import type { Store, Shelf } from "./types";
 
 export type RandomRange = { min: number; max: number };
 export type SweepOptions = {

@@ -236,3 +236,15 @@ __pycache__/
 artifacts/models/*-latest.pt
 artifacts/models/*.tmp
 examples/*
+
+artifacts/research/*
+
+# Research checkpoints are reproducible local artifacts; retain reports and images.
+artifacts/research/**/*.pt
+artifacts/research/**/*.tmp
+artifacts/research/**/*.npy
+
+# Superseded exploratory evaluations; final reports below remain reviewable.
+artifacts/research/evaluation/
+artifacts/research/evaluation-no-vae/
+artifacts/research/evaluation-oracle-cameras/

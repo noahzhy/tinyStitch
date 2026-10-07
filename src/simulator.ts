@@ -1,7 +1,7 @@
 import * as THREE from "three";
-import { StoreRenderer } from "../../src/sim/renderer";
-import { rng } from "../../src/sim/store";
-import type { Shelf } from "../../src/types";
+import { StoreRenderer } from "./sim/renderer";
+import { rng } from "./sim/store";
+import type { Shelf } from "./types";
 import { createSweepPlan, type SweepOptions, type SweepPlan } from "./sweep";
 
 export type Sweep = SweepPlan & { frames: string[] };
