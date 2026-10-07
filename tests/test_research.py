@@ -1262,3 +1262,50 @@ def test_multiscale_depth_gradient_detects_blurred_step_and_masks_invalid():
     assert torch.isfinite(blurred.grad).all() and blurred.grad.abs().sum() > 0
     empty = torch.zeros_like(truth)
     assert multiscale_gradient_loss(blurred, empty).item() == 0
+
+
+def test_compact_depth_shapes_gradients_and_parameter_budget():
+    from backend.research.model import PoseDepth, Pipeline
+    import torch
+
+    dense = PoseDepth(192, 8)
+    compact = PoseDepth(192, 8, compact_depth=True)
+    assert (
+        sum(p.numel() for p in compact.depth_refiner.parameters())
+        < sum(p.numel() for p in dense.depth_refiner.parameters()) / 10
+    )
+    tokens = torch.randn(2, 12, 192, requires_grad=True)
+    depth = compact.depths(tokens, 3, 4, (24, 32))
+    assert (
+        depth.shape == (2, 24, 32) and torch.isfinite(depth).all() and (depth > 0).all()
+    )
+    depth.mean().backward()
+    assert tokens.grad.abs().sum() > 0
+    model = Pipeline(depth_refinement=True, compact_depth=True)
+    restored = Pipeline(**model.config)
+    restored.load_state_dict(model.state_dict())
+
+
+def test_depth_consistent_fusion_rejects_conflicting_surface():
+    model = Pipeline(32, 4, 1, field_arch="fourier")
+    rgb = torch.zeros(2, 3, 16, 16)
+    rgb[0, 0] = 1.0
+    rgb[1, 2] = 1.0
+    K = torch.tensor([[20.0, 0, 7.5], [0, 20.0, 7.5], [0, 0, 1.0]])[None].repeat(
+        2, 1, 1
+    )
+    T = torch.eye(4)[None].repeat(2, 1, 1)
+    T[1, 0, 3] = -0.15
+    depth = torch.ones(2, 16, 16)
+    depth[1] = 1.08
+    with torch.no_grad():
+        _, structure, appearance, _ = model.features(rgb)
+        point = torch.tensor([[0.0, 0.0, 1.0]])
+        args = (point, rgb, K, T, structure, appearance, depth)
+        weighted = model.field.query(*args)
+        model.field.color_fusion = "depth_consistent"
+        nearest = model.field.query(*args)
+    assert torch.allclose(nearest[2], torch.tensor([[1.0, 0.0, 0.0]]), atol=1e-6)
+    assert weighted[2][0, 2] > .1
+    for index in (0, 1, 3, 4):
+        assert torch.equal(weighted[index], nearest[index])

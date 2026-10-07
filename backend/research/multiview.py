@@ -61,7 +61,13 @@ def single(
     model, state = load_model(checkpoint, device)
     model.requires_grad_(False)
     if color_fusion is not None:
-        if color_fusion not in ("weighted", "consensus", "nearest"):
+        if color_fusion not in (
+            "weighted",
+            "consensus",
+            "nearest",
+            "structure_product",
+            "depth_consistent",
+        ):
             raise ValueError("Unknown fusion mode")
         model.field.color_fusion = color_fusion
     if color_residual_limit is not None:
@@ -106,6 +112,12 @@ def single(
             import copy
 
             head = copy.deepcopy(model.pose).eval().requires_grad_(False)
+            if model.config.get("compact_depth"):
+                from .model import PoseDepth
+
+                head.depth_refiner = PoseDepth(
+                    model.config["dim"], model.config["patch"]
+                ).depth_refiner.to(device)
             head.load_state_dict(calibration["weights"], strict=False)
             gh, gw = structure.shape[-2:]
             with torch.no_grad():
@@ -394,7 +406,16 @@ if __name__ == "__main__":
     p.add_argument("--color-residual-limit", type=float)
     p.add_argument("--source-limit", type=int)
     p.add_argument("--local-sources", type=int)
-    p.add_argument("--color-fusion", choices=["weighted", "consensus", "nearest"])
+    p.add_argument(
+        "--color-fusion",
+        choices=[
+            "weighted",
+            "consensus",
+            "nearest",
+            "structure_product",
+            "depth_consistent",
+        ],
+    )
     p.add_argument("--alignment")
     p.add_argument("--oracle-control", action="store_true")
     p.add_argument("--single-count", type=int)

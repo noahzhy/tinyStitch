@@ -51,6 +51,7 @@ def main():
     da.add_argument("--consistency-weight", type=float, default=0)
     da.add_argument("--edge-weight", type=float, default=0)
     da.add_argument("--multiscale-weight", type=float, default=0)
+    da.add_argument("--compact-depth", action="store_true")
     da.add_argument("--skip-test", action="store_true")
     ra = sub.add_parser(
         "render-adapt", help="frozen-geometry multiscene orthographic field training"
@@ -174,7 +175,16 @@ def main():
     m.add_argument("--color-residual-limit", type=float)
     m.add_argument("--source-limit", type=int)
     m.add_argument("--local-sources", type=int)
-    m.add_argument("--color-fusion", choices=["weighted", "consensus", "nearest"])
+    m.add_argument(
+        "--color-fusion",
+        choices=[
+            "weighted",
+            "consensus",
+            "nearest",
+            "structure_product",
+            "depth_consistent",
+        ],
+    )
     m.add_argument("--alignment")
     m.add_argument("--oracle-control", action="store_true")
     m.add_argument("--counts", type=int, nargs="+", default=[10, 30, 60])

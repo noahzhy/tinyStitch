@@ -92,7 +92,12 @@ class GlobalPoseRefiner(nn.Module):
 
 class PoseDepth(nn.Module):
     def __init__(
-        self, dim, refinement_patch=None, architecture="legacy", max_tokens=None
+        self,
+        dim,
+        refinement_patch=None,
+        architecture="legacy",
+        max_tokens=None,
+        compact_depth=False,
     ):
         super().__init__()
         self.architecture = architecture
@@ -118,6 +123,17 @@ class PoseDepth(nn.Module):
                 nn.Conv2d(dim, 64, 3, padding=1),
                 nn.GELU(),
                 nn.Conv2d(64, refinement_patch**2, 3, padding=1),
+                nn.PixelShuffle(refinement_patch),
+            )
+        if compact_depth:
+            if not refinement_patch:
+                raise ValueError("Compact depth requires spatial refinement")
+            self.depth_refiner = nn.Sequential(
+                nn.Conv2d(dim, 32, 1),
+                nn.GELU(),
+                nn.Conv2d(32, 32, 3, padding=1, groups=32),
+                nn.GELU(),
+                nn.Conv2d(32, refinement_patch**2, 1),
                 nn.PixelShuffle(refinement_patch),
             )
         nn.init.zeros_(self.head[-1].weight)
@@ -286,6 +302,20 @@ class Field(nn.Module):
         z = aggregate(zs)
         a = aggregate(apps)
         base = aggregate(colors)
+        if getattr(self, "color_fusion", "weighted") == "depth_consistent":
+            residual = torch.stack(deltas).abs()
+            visible = weight > 0
+            best = residual.masked_fill(~visible, float("inf")).min(0).values
+            # Reject source surfaces inconsistent with the current 3D sample;
+            # adaptive tolerance retains the best observed surface when depths are noisy.
+            tolerance = torch.maximum(best + 0.015, best.new_full(best.shape, 0.03))
+            color_weight = weight * (residual <= tolerance[None]).to(weight.dtype)
+            color_weight = color_weight * torch.exp(-residual.square() / (0.03**2))
+            color_den = color_weight.sum(0)
+            fused = (torch.stack(colors) * color_weight[..., None]).sum(
+                0
+            ) / color_den.clamp_min(1e-8)[:, None]
+            base = torch.where((color_den > 1e-8)[:, None], fused, base)
         if getattr(self, "color_fusion", "weighted") == "consensus":
             observed_colors = torch.stack(colors)
             # Weighted channel medians guide selection of one observed RGB.
@@ -307,7 +337,10 @@ class Field(nn.Module):
                 selected, torch.arange(len(points), device=points.device)
             ]
             base = torch.where((weight.sum(0) > 0)[:, None], base, base * 0)
-        if getattr(self, "color_fusion", "weighted") == "nearest":
+        if getattr(self, "color_fusion", "weighted") in (
+            "nearest",
+            "structure_product",
+        ):
             # Near-front shelf capture: closest lateral camera limits parallax
             # sensitivity to uncertain depth. Density and feature support stay unchanged.
             centers = -(T[:, :3, :3].transpose(1, 2) @ T[:, :3, 3, None])[:, :, 0]
@@ -318,9 +351,20 @@ class Field(nn.Module):
             chosen = torch.stack(colors)[
                 selected, torch.arange(len(points), device=points.device)
             ]
-            base = torch.where(
+            selected_base = torch.where(
                 torch.isfinite(cost.min(0).values)[:, None], chosen, base
             )
+            if getattr(self, "color_fusion", "weighted") == "structure_product":
+                # Synthetic opaque shelf prior: colored products, neutral structure.
+                observed = torch.stack(colors)
+                saturation = (
+                    observed.max(-1).values - observed.min(-1).values
+                ) / observed.max(-1).values.clamp_min(0.05)
+                product = (saturation * weight).sum(0) / den
+                blend = ((product - 0.12) / 0.18).clamp(0, 1)[:, None]
+                base = selected_base * (1 - blend) + base * blend
+            else:
+                base = selected_base
         delta = aggregate([d[:, None] for d in deltas])
         support = weight.max(0).values
         return z, a, base, delta, support
@@ -481,6 +525,7 @@ class Pipeline(nn.Module):
         color_fusion="weighted",
         feature_center_mapping=False,
         global_pose=False,
+        compact_depth=False,
     ):
         super().__init__()
         self.config = dict(dim=dim, patch=patch, layers=layers)
@@ -496,8 +541,14 @@ class Pipeline(nn.Module):
             self.config["opaque_surface"] = True
         self.jepa = CrossJEPA(dim, patch, layers)
         self.pose = PoseDepth(
-            dim, patch if depth_refinement else None, pose_arch, pose_tokens
+            dim,
+            patch if depth_refinement else None,
+            pose_arch,
+            pose_tokens,
+            compact_depth,
         )
+        if compact_depth:
+            self.config["compact_depth"] = True
         if global_pose:
             self.config["global_pose"] = True
             self.pose.global_sequence = GlobalPoseRefiner(dim)

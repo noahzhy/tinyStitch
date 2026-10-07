@@ -96,6 +96,7 @@ def run(
     edge_weight=0,
     skip_test=False,
     multiscale_weight=0,
+    compact_depth=False,
 ):
     if steps < 1 or consistency_weight < 0 or edge_weight < 0 or multiscale_weight < 0:
         raise ValueError("Need positive steps and nonnegative loss weights")
@@ -108,6 +109,18 @@ def run(
         raise ValueError("Use a fresh depth experiment directory")
     start = time.perf_counter()
     model, state = load_model(checkpoint)
+    teacher = None
+    original_depth_parameters = sum(
+        p.numel() for p in model.pose.depth_refiner.parameters()
+    )
+    if compact_depth:
+        from .model import PoseDepth
+
+        teacher = copy.deepcopy(model.pose).eval().requires_grad_(False)
+        model.pose.depth_refiner = PoseDepth(
+            model.config["dim"], model.config["patch"], compact_depth=True
+        ).depth_refiner
+        model.config["compact_depth"] = True
     model.requires_grad_(False)
     model.pose.depth.requires_grad_(True)
     if model.pose.refinement_patch:
@@ -177,6 +190,21 @@ def run(
             prediction,
             scene["truth"][ids] if consistency_weight or edge_weight else truth[ids],
         )
+        if teacher is not None:
+            source_tokens = (
+                scene["tokens"][ids]
+                if consistency_weight or edge_weight
+                else tokens[ids]
+            )
+            with torch.no_grad():
+                target = teacher.depths(source_tokens, gh, gw, (height, width))
+            loss = (
+                loss
+                + 0.25
+                * (prediction.clamp_min(0.001).log() - target.clamp_min(0.001).log())
+                .abs()
+                .mean()
+            )
         if not torch.isfinite(loss):
             raise ValueError("Depth optimization diverged")
         optimizer.zero_grad()
@@ -220,6 +248,11 @@ def run(
         consistency_weight=consistency_weight,
         edge_weight=edge_weight,
         multiscale_weight=multiscale_weight,
+        compact_depth=compact_depth,
+        refiner_parameters=sum(
+            p.numel() for p in model.pose.depth_refiner.parameters()
+        ),
+        original_refiner_parameters=original_depth_parameters,
         geometry_resolution=[height, width],
         target_view_used=False,
         test_loaded=not skip_test,
@@ -232,7 +265,9 @@ def run(
         elapsed_seconds=time.perf_counter() - start,
     )
     saved = copy.deepcopy(state)
-    saved.update(model=model.state_dict(), depth_adaptation=protocol)
+    saved.update(
+        model=model.state_dict(), config=model.config, depth_adaptation=protocol
+    )
     torch.save(saved, out / "model.pt")
     (out / "report.json").write_text(
         json.dumps(dict(protocol=protocol, rows=rows), indent=2)
@@ -250,5 +285,6 @@ if __name__ == "__main__":
     p.add_argument("--consistency-weight", type=float, default=0)
     p.add_argument("--edge-weight", type=float, default=0)
     p.add_argument("--multiscale-weight", type=float, default=0)
+    p.add_argument("--compact-depth", action="store_true")
     p.add_argument("--skip-test", action="store_true")
     run(**vars(p.parse_args()))

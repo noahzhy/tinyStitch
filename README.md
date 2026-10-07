@@ -274,3 +274,7 @@ python3 -m backend.research.evaluate --data data/research/my-run --checkpoint ar
 ## 第一阶段深度几何优化（2026-10-08）
 
 新增多尺度log深度差监督并完成同起点、同1800步预算对照。6个测试场景平均AbsRel：原模型3.294%、继续训练3.197%、多尺度分支3.168%；边界误差3.799%→3.701%，但同预算对照3.688%更低，遮挡边缘问题仍未解决。仅优化深度头，验证了相机/VAE/渲染器与冻结尺度校准分支未改变；未评估第二阶段。63项测试通过。[第一阶段报告与复现命令](artifacts/research/mixed-bays-geometry-optimization-v2/REPORT.md)。
+
+## 简洁深度头压缩对照（2026-10-08）
+
+新增可选compact_depth：32通道深度可分离卷积，细化参数46,160→2,928；完成2400步监督/蒸馏训练和6场测试。AbsRel3.168%→4.103%，边界也退化；MPS缓存token深度头耗时1.094→0.958ms，不能视为端到端提速。保留原模型，轻量候选不推广；64项测试通过。[结构、精度/效率对照与复现命令](artifacts/research/mixed-bays-compact-depth-v1/REPORT.md)。
