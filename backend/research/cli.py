@@ -24,6 +24,7 @@ def main():
     g.add_argument("--varied-layout", action="store_true")
     g.add_argument("--capture-tilt", action="store_true")
     g.add_argument("--mixed-bays", action="store_true")
+    g.add_argument("--random-bays", action="store_true")
     pa = sub.add_parser(
         "pose-adapt", help="scene-disjoint variable-baseline pose adaptation"
     )

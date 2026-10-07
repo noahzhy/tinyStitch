@@ -8,15 +8,19 @@ from backend.research.data import load_input, load_supervised
 from backend.research.depthadapt import multiscale_gradient_loss
 
 
-def run(checkpoint, output):
+def run(checkpoint, output, data="data/research/mixed-bays-v1"):
     torch.set_num_threads(4)
     model, _ = load_model(checkpoint, "mps")
     model.eval().requires_grad_(False)
     out = Path(output)
     out.mkdir(parents=True, exist_ok=True)
     rows = []
-    for seed in range(738018, 738024):
-        scene = Path("data/research/mixed-bays-v1") / str(seed)
+    entries = json.loads((Path(data) / "manifest.json").read_text())["scenes"]
+    for entry in entries:
+        if entry["split"] != "test":
+            continue
+        seed = entry["seed"]
+        scene = Path(data) / entry["path"]
         rgb, K = load_input(scene, "mps")
         with torch.no_grad():
             _, _, _, pred = model.features_batched(rgb, 4)
@@ -63,4 +67,5 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--checkpoint", required=True)
     p.add_argument("--output", required=True)
+    p.add_argument("--data", default="data/research/mixed-bays-v1")
     run(**vars(p.parse_args()))

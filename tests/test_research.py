@@ -1309,3 +1309,24 @@ def test_depth_consistent_fusion_rejects_conflicting_surface():
     assert weighted[2][0, 2] > .1
     for index in (0, 1, 3, 4):
         assert torch.equal(weighted[index], nearest[index])
+
+
+def test_random_bays_scene_counts_are_seeded_and_split_disjoint(tmp_path):
+    import json
+    from backend.research.data import generate
+    a, b = tmp_path / 'a', tmp_path / 'b'
+    for root in (a, b):
+        generate(root, scenes=6, seed=741000, h=16, w=24, views=2, random_bays=True)
+    recipes = []
+    for seed in range(741000, 741006):
+        x = json.loads((a / str(seed) / 'scene.json').read_text())['layout']
+        y = json.loads((b / str(seed) / 'scene.json').read_text())['layout']
+        assert x == y
+        layers = [bay['layers'] for bay in x['bays']]
+        assert 3 <= len(layers) <= 7 and len(set(layers)) > 1
+        assert all(2 <= count <= 6 for count in layers)
+        recipes.append(tuple(layers))
+    assert len(set(recipes)) > 1
+    manifest = json.loads((a / 'manifest.json').read_text())['scenes']
+    assert len({row['seed'] for row in manifest}) == 6
+    assert {row['split'] for row in manifest} == {'train', 'val', 'test'}

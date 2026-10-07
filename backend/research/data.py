@@ -128,6 +128,7 @@ def generate(
     varied_layout=False,
     capture_tilt=False,
     mixed_bays=False,
+    random_bays=False,
 ):
     if varied_layout and scenes != 24:
         raise ValueError(
@@ -172,6 +173,23 @@ def generate(
                         "empty_probability": 0.04,
                     }
                     for i in range(5)
+                ]
+            }
+        if random_bays:
+            layout_rng = np.random.default_rng(seed + n + 10000000)
+            count = int(layout_rng.integers(3, 8))
+            layer_counts = layout_rng.integers(2, 7, size=count)
+            if len(set(layer_counts.tolist())) == 1:
+                layer_counts[-1] = 2 if layer_counts[0] != 2 else 6
+            layout = {
+                "bays": [
+                    dict(
+                        layers=int(layers),
+                        group_size=int(layout_rng.choice([2, 3, 4, 6, 1000])),
+                        uneven=True,
+                        empty_probability=float(layout_rng.uniform(0, 0.12)),
+                    )
+                    for layers in layer_counts
                 ]
             }
         boxes, width, rng = shelf_scene(seed + n, scene_width, layout)
