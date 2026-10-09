@@ -1,6 +1,8 @@
 import * as THREE from "three";
 import type { Store } from "../types";
-import { rng } from "./store";
+import { shelfBays, shelfProducts, createMerchandising } from "./structure";
+import { productTemplate } from "./products";
+import { setCameraPose } from "./camera-pose";
 export class StoreRenderer {
   renderer: THREE.WebGLRenderer;
   scene = new THREE.Scene();
@@ -40,7 +42,6 @@ export class StoreRenderer {
     const light = new THREE.DirectionalLight(0xffffff, 2);
     light.position.set(2, 6, -3);
     this.scene.add(light);
-    const r = rng(store.seed);
     for (const s of store.shelves) {
       const g = new THREE.Group();
       g.position.set(s.x, 0, s.z);
@@ -62,21 +63,24 @@ export class StoreRenderer {
         g.add(m);
       };
       box(s.width, s.height, 0.06, 0, s.height / 2, 0, 0x737a81);
-      for (let l = 0; l < 4; l++) {
-        box(s.width, 0.06, s.depth, 0, 0.18 + l * 0.45, 0, 0xb9bfc3);
-        for (let side of [-1, 1])
-          for (let c = 0; c < (s.productColumns ?? 16); c++) {
-            const n = s.productColumns ?? 16;
-            box(
-              (s.width / n) * 0.8,
-              0.23 + r() * 0.12,
-              0.12 + r() * 0.12,
-              -s.width / 2 + ((c + 0.5) * s.width) / n,
-              0.34 + l * 0.45,
-              side * s.depth * 0.28,
-              new THREE.Color().setHSL((c % 4) / 4, 0.5, 0.5),
-            );
-          }
+      const bays = shelfBays(s);
+      for (const bay of bays) {
+        for (const y of bay.layerHeights)
+          box(bay.width, 0.06, s.depth, bay.x, y, 0, 0xb9bfc3);
+        for (const side of [-1, 1])
+          box(0.035, s.height, s.depth, bay.x + side * bay.width / 2, s.height / 2, 0, 0x8c969d);
+      }
+      const catalog = (s.merchandising ?? createMerchandising(s, store.seed)).catalog;
+      const templates = new Map<string, THREE.Group>();
+      for (const p of shelfProducts(s, store.seed)) {
+        let template = templates.get(p.skuId);
+        if (!template) {
+          template = productTemplate(catalog.find(sku => sku.id === p.skuId)!);
+          templates.set(p.skuId, template);
+        }
+        const item = template.clone();
+        item.position.set(p.x, p.y, p.z);
+        g.add(item);
       }
       this.scene.add(g);
     }
@@ -90,18 +94,19 @@ export class StoreRenderer {
   renderPose(
     p: { x: number; y?: number; z: number },
     look: { x: number; y?: number; z: number },
+    rollDegrees = 0,
   ) {
-    this.camera.position.set(p.x, p.y ?? 1, p.z);
-    this.camera.lookAt(look.x, look.y ?? 1, look.z);
-    this.camera.updateMatrixWorld(true);
+    setCameraPose(this.camera, p, look, rollDegrees);
     this.renderer.render(this.scene, this.camera);
   }
   dispose() {
     this.scene.traverse((o) => {
       if (o instanceof THREE.Mesh) {
         o.geometry.dispose();
-        for (const m of Array.isArray(o.material) ? o.material : [o.material])
+        for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+          m.map?.dispose();
           m.dispose();
+        }
       }
     });
     this.renderer.dispose();

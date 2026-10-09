@@ -1,106 +1,64 @@
-import { chromium } from "playwright";
-import fs from "node:fs/promises";
-import path from "node:path";
-const args = Object.fromEntries(
-  process.argv.slice(2).map((a) => a.replace(/^--/, "").split("=")),
-);
-const seed = Number(args.seed || 42),
-  count = Number(args.count || 1),
-  output = path.resolve(args.output || "examples/simulated");
-if (
-  !Number.isInteger(seed) ||
-  seed < 0 ||
-  seed > 4294967295 ||
-  !Number.isInteger(count) ||
-  count < 1 ||
-  count > 500
-)
-  throw Error("seed 必须是 32 位非负整数，count 必须为 1–500");
-const rangeOrNumber = (key, lower, upper) =>
-  args[key] === "random"
-    ? {
-        min: Number(args[`${key}-min`] ?? lower),
-        max: Number(args[`${key}-max`] ?? upper),
+import { readFile, writeFile, mkdir, mkdtemp, rename, lstat } from 'node:fs/promises';
+import { resolve, join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createServer } from 'vite';
+import puppeteer from 'puppeteer-core';
+import { makeZip } from '../src/archive.ts';
+import { help, parseCLI, resolveCLI } from './cli-options.mjs';
+
+async function exists(path) { try { await lstat(path); return true; } catch (e) { if (e.code === 'ENOENT') return false; throw e; } }
+async function main() {
+  const values = parseCLI(process.argv.slice(2));
+  if (values.help) { console.log(help); return; }
+  const config = values.config ? JSON.parse(await readFile(values.config, 'utf8')) : {};
+  const request = resolveCLI(values, config);
+  const output = resolve(request.out);
+  if (await exists(output)) throw Error(`输出目录已存在，不会覆盖：${output}`);
+  const root = fileURLToPath(new URL('../', import.meta.url));
+  let server, browser, staging;
+  try {
+    server = await createServer({ root, logLevel: 'error', server: { host: '127.0.0.1', port: 0, strictPort: false, open: false } });
+    await server.listen();
+    const executablePath = request.browser ?? process.env.CHROME_PATH;
+    browser = await puppeteer.launch({ ...(executablePath ? { executablePath } : { channel: 'chrome' }), headless: true, args: ['--enable-unsafe-swiftshader'], timeout: 30000 });
+    const page = await browser.newPage();
+    page.setDefaultTimeout(120000);
+    const port = server.httpServer.address().port;
+    await page.goto(`http://127.0.0.1:${port}/generate.html`);
+    await page.waitForFunction(() => typeof window.generateShelfCLI === 'function');
+    await mkdir(dirname(output), { recursive: true });
+    staging = await mkdtemp(join(dirname(output), '.shelf-generating-'));
+    const manifest = { schemaVersion: 1, status: 'running', renderer: 'Three.js / headless Chromium', seed: request.seed, count: request.count, options: request.options, sequences: [] };
+    for (let i = 0; i < request.count; i++) {
+      const seed = request.seed + i;
+      const subdir = request.count === 1 ? '' : `seed-${seed}`;
+      console.log(`生成 ${i + 1}/${request.count}，seed=${seed}`);
+      const rendered = await page.evaluate(({ seed, options }) => window.generateShelfCLI(seed, options), { seed, options: request.options });
+      const files = rendered.map(file => ({ name: file.name, bytes: Buffer.from(file.base64, 'base64') }));
+      for (const file of files) {
+        if (!/^(rgb\/\d{4}\.jpg|gt\/(orthographic\.png|coverage\.png|metadata\.json|camera_poses\.(json|csv))|generation\/(scene|config)\.json|(intrinsics|timestamps|capture)\.json)$/.test(file.name)) throw Error(`无效输出文件：${file.name}`);
+        const path = join(staging, subdir, file.name);
+        await mkdir(dirname(path), { recursive: true });
+        await writeFile(path, file.bytes, { flag: 'wx' });
       }
-    : Number(args[key]);
-const options =
-  args.length !== undefined || args.frames !== undefined
-    ? {
-        ...(args.length !== undefined
-          ? { shelfLength: rangeOrNumber("length", 2, 8) }
-          : {}),
-        frames: args.frames !== undefined ? rangeOrNumber("frames", 8, 16) : 9,
-      }
-    : 9;
-const browser = await chromium.launch({
-  headless: true,
-  channel: "chrome",
-  args: [
-    "--use-gl=angle",
-    "--use-angle=swiftshader",
-    "--enable-unsafe-swiftshader",
-  ],
-});
-const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
-try {
-  await page.goto(args.url || "http://127.0.0.1:5180");
-  await page.waitForFunction(() => window.tinyStitch);
-  for (let i = 0; i < count; i++) {
-    const sample = await page.evaluate(
-      ({ seed, options }) => window.tinyStitch.generate(seed, options),
-      { seed: seed + i, options },
-    );
-    const dest = count === 1 ? output : path.join(output, String(seed + i));
-    const previous = await fs
-      .readFile(path.join(dest, "generation/scene.json"), "utf8")
-      .then(JSON.parse)
-      .catch((e) => {
-        if (e.code === "ENOENT") return null;
-        throw e;
-      });
-    const existing = await fs.readdir(path.join(dest, "rgb")).catch((e) => {
-      if (e.code === "ENOENT") return [];
-      throw e;
-    });
-    if (
-      existing.length &&
-      (!previous ||
-        ["store", "shelf", "poses", "side", "distance"].some(
-          (k) => JSON.stringify(previous[k]) !== JSON.stringify(sample[k]),
-        ) ||
-        existing.filter((f) => f.endsWith(".jpg")).length !==
-          sample.frames.length)
-    )
-      throw Error(
-        "已有输出目录的场景或图片数量不同，请指定新的 --output；原始图片未覆盖",
-      );
-    await fs.mkdir(path.join(dest, "rgb"), { recursive: true });
-    await fs.mkdir(path.join(dest, "generation"), { recursive: true });
-    for (let j = 0; j < sample.frames.length; j++)
-      await fs.writeFile(
-        path.join(dest, "rgb", `${String(j).padStart(4, "0")}.jpg`),
-        Buffer.from(sample.frames[j].split(",")[1], "base64"),
-      );
-    const { frames, ...metadata } = sample;
-    await fs.writeFile(
-      path.join(dest, "generation", "scene.json"),
-      JSON.stringify(metadata, null, 2),
-    );
-    console.log(
-      JSON.stringify({
-        seed: seed + i,
-        frames: sample.frames.length,
-        shelf: sample.shelf.id,
-        shelf_length: sample.shelf.width,
-        estimated_overlap: sample.estimatedOverlap,
-        output: dest,
-      }),
-    );
-  }
-  await page.screenshot({
-    path: path.join(output, "../simulator.png"),
-    fullPage: true,
-  });
-} finally {
-  await browser.close();
+      if (request.zip) await writeFile(join(staging, subdir, 'sequence.zip'), makeZip(files), { flag: 'wx' });
+      const scene = JSON.parse(files.find(f => f.name === 'generation/scene.json').bytes.toString());
+      const gt = JSON.parse(files.find(f => f.name === 'gt/metadata.json').bytes.toString());
+      manifest.sequences.push({ seed, directory: subdir || '.', frames: scene.poses.length, bays: scene.shelf.bays.length, groundTruth: { image: gt.files.image, width: gt.width, height: gt.height, cameraPoses: "gt/camera_poses.json", cameraPosesCSV: "gt/camera_poses.csv" }, emptySlots: scene.shelf.merchandising.slots.filter(s => s.stock === 0).length, slots: scene.shelf.merchandising.slots.length });
+      await writeFile(join(staging, 'manifest.json'), JSON.stringify(manifest, null, 2));
+    }
+    manifest.status = 'complete';
+    await writeFile(join(staging, 'manifest.json'), JSON.stringify(manifest, null, 2));
+    if (await exists(output)) throw Error(`输出目录已存在，不会覆盖：${output}`);
+    await rename(staging, output);
+    staging = undefined;
+    console.log(`已生成全部数据：${output}`);
+  } catch (error) {
+    if (staging) {
+      await writeFile(join(staging, 'FAILED.json'), JSON.stringify({ status: 'failed', reason: error.message }, null, 2));
+      console.error(`未完成的数据保留于：${staging}`);
+    }
+    throw error;
+  } finally { await browser?.close(); await server?.close(); }
 }
+main().catch(error => { console.error(`生成失败：${error.message}`); process.exitCode = 1; });

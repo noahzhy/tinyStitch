@@ -1,61 +1,15 @@
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import {
-  Camera,
-  Upload,
-  Layers,
-  Download,
-  ArrowRight,
-  RefreshCw,
-  Dices,
-  CheckCircle,
-  AlertCircle,
-  Square,
-  Image as ImageIcon,
-} from "lucide-react";
+import { Camera, Layers, Download, RefreshCw, Dices, AlertCircle, Image as ImageIcon } from "lucide-react";
 import { StoreRenderer } from "./sim/renderer";
 import { generateStore } from "./sim/store";
 import { makeSweep, type Sweep } from "./simulator";
-import { createSweepPlan, type SweepOptions } from "./sweep";
+import { makeZip, sequenceFiles, saveFile, imageBytes } from "./archive";
+import { DEFAULT_OPTIONS } from "./defaults";
+import { resolveBayLayout, MAX_BAYS } from "./sim/structure";
+import { resolveShelfLength } from "./sweep";
 import "./style.css";
 
-type Input = { id: string; count: number; names: string[]; preview: string[] };
-type Report = {
-  size: number[];
-  seconds: number;
-  input_count: number;
-  input_digest: string;
-  alignment: { after_median_px: number };
-  pairs: {
-    i: number;
-    j: number;
-    accepted: boolean;
-    matches: number;
-    inliers: number;
-    median_error_px?: number;
-    reason?: string;
-  }[];
-  warnings: string[];
-};
-type Job = {
-  id: string;
-  status: string;
-  progress: number;
-  message: string;
-  error?: string;
-  result?: { report: Report; png: string; jpg: string; json: string };
-};
-async function api(path: string, options?: RequestInit) {
-  const res = await fetch(path, options);
-  if (!res.ok) {
-    let text = await res.text();
-    try {
-      text = JSON.parse(text).detail || text;
-    } catch {}
-    throw Error(typeof text === "string" ? text : JSON.stringify(text));
-  }
-  return res.json();
-}
 type Setting = {
   mode: "random" | "custom";
   value: number;
@@ -64,6 +18,8 @@ type Setting = {
 };
 const initialLength: Setting = { mode: "random", value: 3, min: 2, max: 8 };
 const initialFrames: Setting = { mode: "custom", value: 9, min: 8, max: 16 };
+const initialBayLayers = DEFAULT_OPTIONS.bayLayers;
+const initialView = DEFAULT_OPTIONS.view;
 function settingValue(setting: Setting) {
   return setting.mode === "custom"
     ? setting.value
@@ -153,548 +109,157 @@ function GenerationSetting({
   );
 }
 function App() {
-  const [lengthSetting, setLengthSetting] = useState<Setting>(initialLength),
-    [frameSetting, setFrameSetting] = useState<Setting>(initialFrames);
-  const [seed, setSeed] = useState(42),
-    [sweep, setSweep] = useState<Sweep | null>(null),
-    [input, setInput] = useState<Input | null>(null);
-  const [selected, setSelected] = useState(0),
-    [busy, setBusy] = useState(false),
-    [error, setError] = useState(""),
-    [job, setJob] = useState<Job | null>(null),
-    [online, setOnline] = useState(false),
-    [method, setMethod] = useState("jepa"),
-    [health, setHealth] = useState<any>(null);
-  const canvas = useRef<HTMLCanvasElement>(null),
-    renderer = useRef<StoreRenderer | null>(null),
-    poll = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [lengthSetting, setLengthSetting] = useState<Setting>(initialLength);
+  const [frameSetting, setFrameSetting] = useState<Setting>(initialFrames);
+  const [bayLayers, setBayLayers] = useState(initialBayLayers);
+  const [bayMode, setBayMode] = useState<"auto" | "manual">("auto");
+  const [bayWidth, setBayWidth] = useState(DEFAULT_OPTIONS.bayWidth);
+  const [manualBayCount, setManualBayCount] = useState(3);
+  const [viewAngles, setViewAngles] = useState<{ mode: "fixed" | "handheld"; yaw: number; pitch: number; jitter: number }>(initialView);
+  const [stock, setStock] = useState(DEFAULT_OPTIONS.stock);
+  const [seed, setSeed] = useState(42), [sweep, setSweep] = useState<Sweep | null>(null);
+  const [selected, setSelected] = useState(0), [error, setError] = useState("");
+  const [preview, setPreview] = useState<"rgb" | "gt" | "mask">("rgb");
+  const [busy, setBusy] = useState(false);
+  const canvas = useRef<HTMLCanvasElement>(null), renderer = useRef<StoreRenderer | null>(null);
   useEffect(() => {
-    const view = new StoreRenderer(
-      canvas.current!,
-      generateStore(42, 8),
-      720,
-      960,
-    );
-    renderer.current = view;
+    localStorage.removeItem("tinyStitch.rgb-grid.lastJob");
+    if (location.pathname !== "/" || location.search) history.replaceState(null, "", "/");
+    let view: StoreRenderer | undefined;
     try {
-      setSweep(
-        makeSweep(view, 42, {
-          shelfLength: settingValue(initialLength),
-          frames: settingValue(initialFrames),
-        }),
-      );
-    } catch (e) {
-      setError(String(e));
-    }
-    return () => {
-      view.dispose();
-      if (poll.current) clearTimeout(poll.current);
-    };
+      view = new StoreRenderer(canvas.current!, generateStore(42, 8), 720, 960);
+      renderer.current = view;
+      setSweep(makeSweep(view, 42, { ...DEFAULT_OPTIONS, shelfLength: settingValue(initialLength), frames: settingValue(initialFrames) }));
+    } catch (e) { setError(`三维渲染启动失败：${(e as Error).message}`); }
+    return () => { view?.dispose(); renderer.current = null; };
   }, []);
-  useEffect(() => {
-    let alive = true;
-    const check = () =>
-      api("/api/health")
-        .then((value) => {
-          if (alive) {
-            setOnline(true);
-            setHealth(value);
-          }
-        })
-        .catch(() => {
-          if (alive) setOnline(false);
-        });
-    check();
-    const timer = setInterval(check, 5000);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, []);
-  const running = !!job && ["queued", "running"].includes(job.status);
   const generate = (newSeed = seed) => {
     try {
-      setSweep(
-        makeSweep(renderer.current!, newSeed, {
-          shelfLength: settingValue(lengthSetting),
-          frames: settingValue(frameSetting),
-        }),
-      );
-      setSeed(newSeed);
-      setInput(null);
-      setJob(null);
-      setSelected(0);
-      setError("");
-    } catch (e) {
-      setError((e as Error).message);
-    }
+      if (!renderer.current) throw Error("三维渲染器尚未就绪");
+      setSweep(makeSweep(renderer.current, newSeed, { shelfLength: settingValue(lengthSetting), frames: settingValue(frameSetting), bayMode, bayWidth,
+        bayLayers: bayMode === "auto" ? bayLayers : Array.from({ length: manualBayCount }, (_, i) => bayLayers[i % bayLayers.length]), view: viewAngles, stock }));
+      setSeed(newSeed); setSelected(0); setError("");
+    } catch (e) { setError((e as Error).message); }
   };
-  const storeCapture = async () => {
-    if (input) return input;
-    if (!sweep) throw Error("没有图片");
-    const stored: Input = await api("/api/captures", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ frames: sweep.frames }),
-    });
-    setInput(stored);
-    return stored;
+  const download = () => {
+    if (!sweep) return;
+    setBusy(true); setError("");
+    try { saveFile(new Blob([makeZip(sequenceFiles(sweep))], { type: "application/zip" }), `shelf-${sweep.store.seed}.zip`); }
+    catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
   };
-  const upload = async (files: File[]) => {
-    if (!files.length) return;
-    setBusy(true);
-    setError("");
-    try {
-      const body = new FormData();
-      files.forEach((f) => body.append("files", f));
-      const stored = await api("/api/uploads", { method: "POST", body });
-      setInput(stored);
-      setSweep(null);
-      setJob(null);
-      setSelected(0);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-  const watch = async (id: string) => {
-    try {
-      const current: Job = await api(`/api/jobs/${id}`);
-      setJob(current);
-      if (["queued", "running"].includes(current.status))
-        poll.current = setTimeout(() => watch(id), 500);
-      else if (current.status === "failed")
-        setError(current.error || "拼接失败");
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  };
-  const stitch = async () => {
-    setBusy(true);
-    setError("");
-    setJob(null);
-    try {
-      const stored = await storeCapture();
-      const current = await api("/api/stitch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rgb_id: stored.id, method }),
-      });
-      setJob(current);
-      watch(current.id);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-  const downloadSequence = async () => {
-    setBusy(true);
-    try {
-      const stored = await storeCapture();
-      const a = document.createElement("a");
-      a.href = `/api/inputs/${stored.id}/download`;
-      a.download = "shelf-sequence.zip";
-      a.click();
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-  const photos = input?.preview || sweep?.frames || [];
-  const report = job?.result?.report;
-  // Headless generator uses the exact same renderer and sweep as the visible app.
-  useEffect(() => {
-    (window as any).tinyStitch = {
-      generate: (newSeed: number, options: number | SweepOptions = 9) =>
-        makeSweep(renderer.current!, newSeed, options),
-      plan: createSweepPlan,
-    };
-    return () => {
-      delete (window as any).tinyStitch;
-    };
-  }, []);
-  return (
-    <div className="app">
-      <header>
-        <a className="brand" href="http://127.0.0.1:5173">
-          <span className="brand-icon">
-            <Layers size={22} />
-          </span>
-          <div>
-            <strong>
-              tinyLayout <span>/ tinyStitch</span>
-            </strong>
-            <small>货架序列图片拼接实验</small>
+  const photos = sweep?.frames || [];
+  const currentPose = sweep?.cameraGroundTruth.frames[selected];
+  const previewImage = preview === "rgb" ? photos[selected] : preview === "gt" ? sweep?.groundTruth.image : sweep?.groundTruth.coverageMask;
+  const previewName = preview === "rgb" ? `rgb/${String(selected).padStart(4, "0")}.jpg` : preview === "gt" ? "gt/orthographic.png" : "gt/coverage.png";
+  const previewAlt = preview === "rgb" ? `拍摄图片 ${selected + 1}` : preview === "gt" ? "扫过区域的正交 GT" : "扫过区域的覆盖掩码";
+  let activeBayLayers: number[] = [];
+  try {
+    activeBayLayers = resolveBayLayout(resolveShelfLength(seed, settingValue(lengthSetting)), {
+      bayMode, bayWidth, bayLayers: bayMode === "auto" ? bayLayers : Array.from({ length: manualBayCount }, (_, i) => bayLayers[i % bayLayers.length]),
+    }).layers;
+  } catch { /* Invalid draft values are explained when generation is requested. */ }
+  return <div className="app">
+    <header><a className="brand" href="/"><span className="brand-icon"><Layers size={22} /></span>
+      <div><strong>tinyStitch <span>/ 合成数据</span></strong><small>三维货架拍摄序列生成器</small></div></a>
+      <span className="connection online"><i />浏览器内生成</span></header>
+    <main>
+      <div className="intro"><div><div className="eyebrow">SHELF DATA GENERATOR</div>
+        <h1>生成一组货架拍摄图片。</h1><p>独立设置子货架层板数量，选择拍摄视角，下载有序 RGB 序列与扫过区域的正交 GT。</p></div></div>
+      {error && <div className="error" role="alert"><AlertCircle size={18} /><span>{error}</span></div>}
+      <div className="workspace">
+        <section className="panel source"><div className="panel-title"><span><Camera size={18} />生成设置</span><small>{photos.length} 张图片</small></div>
+          <div className="controls"><label>场景种子<input aria-label="场景种子" type="number" min="0" max="4294967295" value={seed} onChange={e => setSeed(Number(e.target.value))} disabled={busy} /></label>
+            <button onClick={() => generate()} disabled={busy}><RefreshCw size={15} />生成拍摄</button>
+            <button className="icon-button" aria-label="随机生成" title="使用新种子随机生成" disabled={busy} onClick={() => generate(crypto.getRandomValues(new Uint32Array(1))[0])}><Dices size={16} /></button></div>
+          <div className="generation-options">
+            <GenerationSetting title="货架长度" unit="模拟米" min={1} max={12} step={0.1} value={lengthSetting} onChange={setLengthSetting} disabled={busy} />
+            <GenerationSetting title="图片张数" min={2} max={48} step={1} value={frameSetting} onChange={setFrameSetting} disabled={busy} />
+            <p>长度 1–12，图片 2–48 张。点击“生成拍摄”应用设置；相同种子与参数可复现。</p>
           </div>
-        </a>
-        <span className={`connection ${online ? "online" : ""}`}>
-          <i />
-          {online ? "拼接服务就绪" : "等待后端 · 8010"}
-        </span>
-      </header>
-      <main>
-        <div className="intro">
-          <div>
-            <div className="eyebrow">SHELF MOSAIC LAB</div>
-            <h1>把连续拍摄，拼成一张货架图。</h1>
-            <p>单个货架的一侧正面 · JEPA 表示匹配 · 仅使用 RGB 图片</p>
+          <div className="configuration-section">
+            <h2>子货架结构</h2>
+            <label className="inline-setting">子货架数量模式
+              <select aria-label="子货架数量模式" value={bayMode} disabled={busy} onChange={e => setBayMode(e.target.value as "auto" | "manual")}>
+                <option value="auto">随长度自动伸缩</option><option value="manual">手动数量</option>
+              </select>
+            </label>
+            {bayMode === "auto" ? <label className="generation-setting">目标子货架宽度（模拟米）<input aria-label="目标子货架宽度" type="number" min={0.5} max={3} step={0.1} value={bayWidth} disabled={busy} onChange={e => setBayWidth(Number(e.target.value))} /></label> :
+              <label className="inline-setting">子货架数量<select aria-label="子货架数量" value={manualBayCount} disabled={busy} onChange={e => setManualBayCount(Number(e.target.value))}>
+                {Array.from({ length: MAX_BAYS }, (_, i) => <option key={i} value={i + 1}>{i + 1} 个</option>)}
+              </select></label>}
+            <span className="setting-title">按当前种子与长度：{activeBayLayers.length || "—"} 个子货架</span>
+            <div className="bay-settings">{activeBayLayers.map((layers, i) => <label key={i}>子货架 {i + 1}
+              <select aria-label={`子货架 ${i + 1} 层板数量`} value={layers} disabled={busy} onChange={e => setBayLayers(current => Array.from({ length: Math.max(current.length, i + 1) }, (_, j) => j === i ? Number(e.target.value) : current[j % current.length]))}>
+                {Array.from({ length: 8 }, (_, j) => <option key={j} value={j + 1}>{j + 1} 层</option>)}
+              </select>
+            </label>)}</div>
+            <p>默认每段约 1 模拟米，数量向上取整后等宽分配；随机长度按当前种子计算。新增段循环沿用层板配置，每段可独立修改，层板数量包含底层。</p>
           </div>
-          <div className="steps">
-            <span>01 拍摄序列</span>
-            <ArrowRight size={14} />
-            <span>02 自动对齐</span>
-            <ArrowRight size={14} />
-            <span>03 拼图导出</span>
+          <div className="configuration-section">
+            <h2>商品陈列</h2>
+            <div className="angle-settings">
+              <label>空位比例（%）<input aria-label="空位比例" type="number" min={0} max={100} step={1} value={Math.round(stock.emptyRate * 100)} disabled={busy} onChange={e => setStock(current => ({ ...current, emptyRate: Number(e.target.value) / 100 }))} /></label>
+              <label>每列纵深容量<input aria-label="每列纵深容量" type="number" min={1} max={4} step={1} value={stock.depthCopies} disabled={busy} onChange={e => setStock(current => ({ ...current, depthCopies: Number(e.target.value) }))} /></label>
+            </div>
+            <div className="generation-setting"><span className="setting-title">同款连续列数范围</span>
+              <div className="range-inputs">{(["facingsMin", "facingsMax"] as const).map((key, i) => <input key={key} aria-label={`同款连续列数${i ? "上限" : "下限"}`} type="number" min={1} max={12} step={1} disabled={busy} value={stock[key]} onChange={e => setStock(current => ({ ...current, [key]: Number(e.target.value) }))} />)}</div>
+            </div>
+            <p>混合盒装、瓶装、罐装与广口罐，按实际宽度紧凑排列，商品间仅留约 4 毫米。缺货时保留原货位，不收拢填空。最大宽度沿用原上限；层间净空足够时，盒装、罐装和广口罐从底部堆叠，瓶装保持单层。</p>
           </div>
-        </div>
-        <div className="workspace">
-          <section className="panel source">
-            <div className="panel-title">
-              <span>
-                <Camera size={18} />
-                输入序列
-              </span>
-              <small>{photos.length} 张照片</small>
+          <div className="configuration-section">
+            <h2>拍摄视角</h2>
+            <label className="inline-setting">拍摄模式<select aria-label="拍摄模式" disabled={busy} value={viewAngles.mode} onChange={e => setViewAngles(current => ({ ...current, mode: e.target.value as "fixed" | "handheld" }))}>
+              <option value="fixed">固定路线</option><option value="handheld">仿真拍摄 · 轻微手持</option>
+            </select></label>
+            <div className="view-presets" role="group" aria-label="视角预设">
+              {([{ title: "正面", yaw: 0, pitch: 0 }, { title: "左侧斜拍", yaw: 18, pitch: 0 }, { title: "右侧斜拍", yaw: -18, pitch: 0 }, { title: "俯拍", yaw: 0, pitch: 15 }]).map(preset =>
+                <button key={preset.title} disabled={busy} aria-pressed={viewAngles.mode === "fixed" && viewAngles.yaw === preset.yaw && viewAngles.pitch === preset.pitch} onClick={() => setViewAngles(current => ({ ...current, mode: "fixed", yaw: preset.yaw, pitch: preset.pitch }))}>{preset.title}</button>)}
+              <button disabled={busy} aria-pressed={viewAngles.mode === "handheld"} onClick={() => setViewAngles({ ...DEFAULT_OPTIONS.view })}>仿真拍摄</button>
             </div>
-            <div className="controls">
-              <label>
-                场景种子
-                <input
-                  aria-label="场景种子"
-                  type="number"
-                  min="0"
-                  max="4294967295"
-                  value={seed}
-                  onChange={(e) => setSeed(Number(e.target.value))}
-                  disabled={running || busy}
-                />
-              </label>
-              <button onClick={() => generate()} disabled={busy || running}>
-                <RefreshCw size={15} />
-                生成拍摄
-              </button>
-              <button
-                className="icon-button"
-                aria-label="随机生成"
-                title="使用新种子随机生成"
-                disabled={busy || running}
-                onClick={() =>
-                  generate(crypto.getRandomValues(new Uint32Array(1))[0])
-                }
-              >
-                <Dices size={16} />
-              </button>
+            <div className="angle-settings">
+              {([{ key: "yaw", title: "偏航角", min: -25, max: 25 }, { key: "pitch", title: "俯仰角", min: -20, max: 20 }, { key: "jitter", title: "逐帧角度扰动", min: 0, max: 15 }] as const).map(field =>
+                <label key={field.key}>{field.title}（°）<input aria-label={field.title} type="number" min={field.min} max={field.max} step={0.5} value={viewAngles[field.key]} disabled={busy} onChange={e => setViewAngles(current => ({ ...current, [field.key]: Number(e.target.value) }))} /></label>)}
             </div>
-            <div className="generation-options">
-              <GenerationSetting
-                title="货架长度"
-                unit="模拟米"
-                min={1}
-                max={12}
-                step={0.1}
-                value={lengthSetting}
-                onChange={setLengthSetting}
-                disabled={busy || running}
-              />
-              <GenerationSetting
-                title="图片张数"
-                min={2}
-                max={48}
-                step={1}
-                value={frameSetting}
-                onChange={setFrameSetting}
-                disabled={busy || running}
-              />
-              <p>
-                长度 1–12，图片 2–48
-                张。点击“生成拍摄”应用设置；骰子按钮换种子随机生成。
-              </p>
-            </div>
-            <div className="method-control">
-              <label>
-                拼接方法
-                <select
-                  aria-label="拼接方法"
-                  value={method}
-                  disabled={busy || running}
-                  onChange={(e) => {
-                    setMethod(e.target.value);
-                    setJob(null);
-                    setError("");
-                  }}
-                >
-                  <option value="jepa">JEPA 学习特征（主流程）</option>
-                  <option value="sift">SIFT 传统特征（对照）</option>
-                </select>
-              </label>
-              <p>
-                {method === "jepa"
-                  ? health?.jepa_ready
-                    ? `已训练 ${health.model.trained_steps} 步 · ${health.model.parameters.toLocaleString()} 参数`
-                    : `缺少已训练 JEPA 权重，预测已禁用`
-                  : "明确使用传统特征对照，不调用 JEPA"}
-              </p>
-              {health?.training && (
-                <p>
-                  训练进度 {health.training.step} /{" "}
-                  {health.training.total_steps} ·{" "}
-                  {health.training.device.toUpperCase()}
-                </p>
-              )}
-            </div>
-            <canvas ref={canvas} className="hidden-renderer" />
-            <div className="photo-stage">
-              {photos[selected] && (
-                <img src={photos[selected]} alt={`拍摄图片 ${selected + 1}`} />
-              )}
-              <span className="frame-number">
-                {selected + 1} / {photos.length}
-              </span>
-            </div>
-            <div className="thumbs">
-              {photos.map((src, i) => (
-                <button
-                  key={src.slice(-60) + i}
-                  aria-label={`查看第 ${i + 1} 张`}
-                  className={i === selected ? "active" : ""}
-                  onClick={() => setSelected(i)}
-                >
-                  <img src={src} alt={`序列 ${i + 1}`} loading="lazy" />
-                  <span>{i + 1}</span>
-                </button>
-              ))}
-            </div>
-            {sweep && (
-              <p className="source-note">
-                场景 {sweep.store.seed} · 实际货架长度{" "}
-                {sweep.shelf.width.toFixed(2)} 模拟米 · {sweep.frames.length}{" "}
-                张照片。沿正面横向移动，相邻画面估计重叠{" "}
-                {(sweep.estimatedOverlap * 100).toFixed(0)}
-                %。图片较少时镜头自动后退，商品会更小。
-              </p>
-            )}
-            {input && !sweep && (
-              <p className="source-note">
-                已按文件名数字顺序导入。请保持同一货架、同一侧，照片之间保留
-                50%–70% 重叠。
-              </p>
-            )}
-            <div className="actions">
-              <label
-                className={`button secondary ${busy || running ? "disabled" : ""}`}
-              >
-                <Upload size={16} />
-                导入拍摄图片
-                <input
-                  aria-label="导入拍摄图片"
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp"
-                  multiple
-                  disabled={busy || running}
-                  onChange={(e) => {
-                    const files = Array.from(e.target.files || []);
-                    e.target.value = "";
-                    upload(files);
-                  }}
-                />
-              </label>
-              <button
-                className="icon-button"
-                title="导出输入序列"
-                aria-label="导出输入序列"
-                onClick={downloadSequence}
-                disabled={!photos.length || busy || running || !online}
-              >
-                <Download size={17} />
-              </button>
-            </div>
-            <button
-              className="primary stitch-button"
-              onClick={stitch}
-              disabled={
-                !online ||
-                !photos.length ||
-                busy ||
-                running ||
-                (method === "jepa" && !health?.jepa_ready)
-              }
-            >
-              <Layers size={18} />
-              {busy ? "准备图片…" : running ? "正在自动拼接…" : "生成完整拼图"}
-              <ArrowRight size={17} />
-            </button>
-            <p className="hint">
-              不需要手动选点。支持 JPG / PNG / WebP，2–48 张；HEIC 请先转换为
-              JPEG。
-            </p>
-          </section>
-          <section className="panel output">
-            <div className="panel-title">
-              <span>
-                <ImageIcon size={18} />
-                拼接结果
-              </span>
-              <small>图像像素坐标</small>
-            </div>
-            {error && (
-              <div role="alert" className="error">
-                <AlertCircle size={18} />
-                <span>{error}</span>
-              </div>
-            )}
-            {running && (
-              <div className="progress">
-                <div>
-                  <span>{job?.message}</span>
-                  <button
-                    onClick={() =>
-                      api(`/api/jobs/${job!.id}/cancel`, { method: "POST" })
-                    }
-                  >
-                    <Square size={12} />
-                    取消
-                  </button>
-                </div>
-                <progress value={job!.progress} max="1" />
-              </div>
-            )}
-            {job?.status === "cancelled" && (
-              <p className="hint">任务已取消，可以重新拼接。</p>
-            )}
-            <div
-              className={`panorama-stage ${job?.result ? "has-result" : ""}`}
-            >
-              {job?.result ? (
-                <img src={job.result.png} alt="自动拼接的完整货架图片" />
-              ) : (
-                <div className="empty">
-                  <div>
-                    <Layers size={34} />
-                  </div>
-                  <h2>等待第一张拼图</h2>
-                  <p>
-                    使用左侧模拟序列，或导入自己的连续照片。
-                    <br />
-                    程序自动对齐、校正曝光并融合接缝。
-                  </p>
-                </div>
-              )}
-            </div>
-            {report && (
-              <>
-                <div className="result-stats">
-                  <div>
-                    <small>输出尺寸</small>
-                    <strong>{report.size.join(" × ")}</strong>
-                  </div>
-                  <div>
-                    <small>计算耗时</small>
-                    <strong>{report.seconds.toFixed(2)} s</strong>
-                  </div>
-                  <div>
-                    <small>匹配残差中位数</small>
-                    <strong>
-                      {report.alignment.after_median_px.toFixed(2)} px
-                    </strong>
-                  </div>
-                  <div>
-                    <small>有效连接</small>
-                    <strong>
-                      {report.pairs.filter((p) => p.accepted).length} /{" "}
-                      {report.pairs.length}
-                    </strong>
-                  </div>
-                </div>
-                <div className="result-actions">
-                  <span>
-                    <CheckCircle size={16} />
-                    已使用全部 {report.input_count} 张输入照片
-                  </span>
-                  <div>
-                    <a
-                      className="button"
-                      href={job!.result!.png}
-                      download="shelf-panorama.png"
-                    >
-                      <Download size={15} />
-                      PNG
-                    </a>
-                    <a
-                      className="button"
-                      href={job!.result!.jpg}
-                      download="shelf-panorama.jpg"
-                    >
-                      JPG
-                    </a>
-                    <a
-                      className="button"
-                      href={job!.result!.json}
-                      download="stitch-report.json"
-                    >
-                      报告 JSON
-                    </a>
-                  </div>
-                </div>
-                <details>
-                  <summary>查看匹配诊断</summary>
-                  <div className="table-wrap">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>图片连接</th>
-                          <th>匹配数</th>
-                          <th>内点数</th>
-                          <th>状态</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {report.pairs.map((p) => (
-                          <tr key={`${p.i}-${p.j}`}>
-                            <td>
-                              {p.i + 1} → {p.j + 1}
-                            </td>
-                            <td>{p.matches}</td>
-                            <td>{p.inliers}</td>
-                            <td title={p.reason}>
-                              {p.accepted ? "通过" : p.reason}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <p className="digest">输入 SHA-256：{report.input_digest}</p>
-                </details>
-                <div className="notes">
-                  {report.warnings.map((w) => (
-                    <p key={w}>{w}</p>
-                  ))}
-                </div>
-              </>
-            )}
-            {!report && (
-              <div className="notes">
-                <p>
-                  “完整”表示融合这组照片的已拍摄区域。未拍到的货架和商品不会被补画。商品凸起或镜头大幅转动可能产生重影。
-                </p>
-              </div>
-            )}
-          </section>
-        </div>
-        <footer>
-          JEPA 潜在表示 · RANSAC 平面变换 · 全序列优化 · 窄缝融合{" "}
-          <span>
-            跨视角 JEPA 实验模型 · MPS / CPU ·{" "}
-            <a href="/api/experiment-report" target="_blank" rel="noreferrer">
-              实际实验报告
-            </a>
-          </span>
-        </footer>
-      </main>
-    </div>
-  );
+            <p>默认仿真拍摄：偏航、俯仰各在 −15°～15° 范围内连续随机扰动，并带轻微位置变化、滚转和非匀速采样。偏航、俯仰输入为中心角，角度扰动为最大幅度。</p>
+            <button className="apply-settings" onClick={() => generate()} disabled={busy}><RefreshCw size={15} />应用设置并生成</button>
+          </div>
+          <canvas ref={canvas} className="hidden-renderer" />
+          {sweep && <div className="generator-summary"><dl>
+            <div><dt>货架长度</dt><dd>{sweep.shelf.width.toFixed(2)} 模拟米</dd></div>
+            <div><dt>图片尺寸</dt><dd>720 × 960</dd></div>
+            <div><dt>图片张数</dt><dd>{photos.length} 张</dd></div>
+            <div><dt>子货架数量 / 单段宽</dt><dd>{sweep.shelf.bays?.length} 个 / {sweep.shelf.bays?.[0].width.toFixed(2)} 米</dd></div>
+            <div><dt>各子货架层板</dt><dd>{sweep.shelf.bays?.map(b => b.layers).join(" / ")} 层</dd></div>
+            <div><dt>偏航 / 俯仰</dt><dd>{sweep.options.view?.yaw}° / {sweep.options.view?.pitch}°</dd></div>
+            <div><dt>拍摄模式</dt><dd>{sweep.options.view?.mode === "handheld" ? "仿真拍摄" : "固定路线"}</dd></div>
+            <div><dt>全货架空位 / 货位</dt><dd>{sweep.shelf.merchandising?.slots.filter(s => s.stock === 0).length} / {sweep.shelf.merchandising?.slots.length}</dd></div>
+            <div><dt>相邻估计重叠</dt><dd>{(sweep.estimatedOverlap * 100).toFixed(0)}%</dd></div>
+          </dl><p>镜头沿货架正面横向移动，使用设定视角与逐帧扰动。图片较少时自动后退；重叠率为正面视角下的近似值。</p></div>}
+          <div className="generator-download"><button className="primary" onClick={download} disabled={!sweep || busy}><Download size={16} />下载完整序列 ZIP</button>
+            <p>包含 RGB、正交 GT、覆盖掩码、坐标映射、相机真实世界 6D 位姿 GT（JSON / CSV）、内参、时间戳、SKU 陈列与空位数据，以及可供 CLI 复用的配置。</p>
+            <button disabled={!sweep || busy} onClick={() => { if (sweep) saveFile(new Blob([JSON.stringify(sweep.cameraGroundTruth, null, 2)], { type: "application/json" }), "camera_poses.json"); }}><Download size={14} />下载相机位姿 GT</button>
+            <button disabled={!sweep || busy} onClick={() => { if (sweep) saveFile(new Blob([JSON.stringify({ schemaVersion: 1, seed: sweep.store.seed, options: sweep.options }, null, 2)], { type: "application/json" }), "shelf-config.json"); }}><Download size={14} />下载 CLI 生成配置</button>
+          </div>
+        </section>
+        <section className="panel output"><div className="panel-title"><span><ImageIcon size={18} />图片预览</span><small>{preview === "rgb" ? (photos.length ? `${selected + 1} / ${photos.length}` : "等待生成") : sweep ? `${sweep.groundTruth.metadata.width} × ${sweep.groundTruth.metadata.height}` : "等待生成"}</small></div>
+          <div className="preview-tabs" role="group" aria-label="预览内容">{([{ key: "rgb", title: "拍摄序列" }, { key: "gt", title: "正交 GT" }, { key: "mask", title: "覆盖掩码" }] as const).map(tab =>
+            <button key={tab.key} aria-pressed={preview === tab.key} onClick={() => setPreview(tab.key)}>{tab.title}</button>)}</div>
+          <div className={`photo-stage generator-preview ${preview !== "rgb" ? "atlas-preview" : ""}`}>{previewImage ? <img src={previewImage} alt={previewAlt} /> : <div className="empty"><Camera size={32} /><p>生成后在这里查看图片</p></div>}</div>
+          {preview === "rgb" ? <div className="thumbs">{photos.map((src, i) => <button key={i} aria-label={`查看第 ${i + 1} 张`} className={i === selected ? "active" : ""} onClick={() => setSelected(i)}><img src={src} alt={`序列 ${i + 1}`} loading="lazy" /><span>{i + 1}</span></button>)}</div> :
+            <p className="gt-description">正面正交渲染，按全部视角在货架正面参考平面上的覆盖并集裁出；未扫到的区域透明。掩码白色为覆盖、黑色为未覆盖，不表示商品遮挡或缺货。{sweep && ` 比例 ${sweep.groundTruth.metadata.pixelsPerMeter.toFixed(0)} 像素 / 模拟米。`}</p>}
+          {previewImage && <div className="generator-frame"><span>{previewName}</span><button onClick={() => saveFile(new Blob([imageBytes(previewImage)], { type: preview === "rgb" ? "image/jpeg" : "image/png" }), previewName.split("/").at(-1)!)}><Download size={14} />下载当前图片</button></div>}
+          {preview === "rgb" && currentPose && <section className="pose-preview" aria-label="相机真实世界位姿 GT">
+            <h2>当前帧 · 相机真实世界位姿 GT</h2>
+            <dl><div><dt>X / Y / Z（米）</dt><dd>{currentPose.position_m.map(v => v.toFixed(4)).join(" / ")}</dd></div>
+              <div><dt>Rx / Ry / Rz（°）</dt><dd>{currentPose.euler_xyz_deg.map(v => v.toFixed(3)).join(" / ")}</dd></div>
+              <div><dt>时间戳（秒）</dt><dd>{currentPose.timestamp_s.toFixed(6)}</dd></div></dl>
+            <p>场景世界坐标，Y 向上；旋转为内禀 Euler XYZ。完整 GT 包含米 / 弧度 6D 坐标、四元数和双向变换矩阵。</p>
+          </section>}
+        </section>
+      </div>
+      <footer><span>Three.js 三维货架 · 有序 RGB 序列</span><span>无需后端或模型权重</span></footer>
+    </main>
+  </div>;
 }
 createRoot(document.getElementById("root")!).render(<App />);
