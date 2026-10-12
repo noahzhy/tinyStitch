@@ -6,15 +6,15 @@ import type { SweepOptions } from "./sweep";
 
 declare global {
   interface Window {
-    generateShelfCLI: (seed: number, options: SweepOptions) => { name: string; base64: string }[];
+    generateShelfCLI: (seed: number, options: SweepOptions, trainingGT?: boolean) => { name: string; base64: string }[];
   }
 }
 
 let renderer: StoreRenderer | undefined;
 // A dedicated rendering entry point, sharing the exact web geometry and export pipeline.
-window.generateShelfCLI = (seed, options) => {
+window.generateShelfCLI = (seed, options, trainingGT = false) => {
   renderer ??= new StoreRenderer(document.querySelector("canvas")!, generateStore(seed), 720, 960);
-  return sequenceFiles(makeSweep(renderer, seed, options)).map(file => {
+  return sequenceFiles(makeSweep(renderer, seed, options, trainingGT)).map(file => {
     let binary = "";
     for (let at = 0; at < file.bytes.length; at += 32768)
       binary += String.fromCharCode(...file.bytes.subarray(at, at + 32768));

@@ -40,6 +40,12 @@ npm start
 
 生成和 ZIP 打包均在浏览器内完成。
 
+## Lite-Struct-JEPA v0.2 验证
+
+项目另提供 Python/MPS Predictive Atlas 原型：TinyViT-5M 预训练骨干、可配置多层 Cross-Attention、双 Latent、Homography/Mesh 残差、EMA 第三视角监督，以及原始照片像素成图。训练是独立 CLI，不影响数据生成网页。
+
+环境安装、两小时小样本实验、检查点恢复、照片拼接及结果解释见 [v0.2 实验文档](docs/LITE_STRUCT_JEPA_V02.md)。默认过拟合直接输入生成器带轻微姿态扰动的透视 `rgb/*.jpg`，通过后才进行 Memory 对照；正交图重投影的平面数据仅作独立诊断。本轮原始透视输入验证保存在 `output/lite-struct-jepa-v02/perspective-overfit/REPORT.md`；历史平面对照与 RGB 失败记录保留在 `output/lite-struct-jepa-v02/benchmark/REPORT.md`。
+
 ## CLI 生成
 
 CLI 需要本机 Chrome / Chromium，无需提前启动网页。完整操作、配置复用、批量生成和全部数据字段见 [CLI 生成文档](docs/CLI_GENERATION.md)。

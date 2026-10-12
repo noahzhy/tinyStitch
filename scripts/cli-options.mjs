@@ -21,6 +21,7 @@ npm run generate -- --out ./output --seed 42 --length 6 --frames 12 --bay-mode a
   --facings MIN:MAX   同款连续列数，默认 2:5
   --depth N           每列纵深容量 1–4，默认 3
   --zip               同时保存每组的 sequence.zip
+  --training-gt       导出真实网格射线对应与跨视角可见性，仅用于训练监督
   --browser FILE      Chrome/Chromium 可执行文件；也可设置 CHROME_PATH
   --help              显示帮助
 `;
@@ -28,7 +29,7 @@ npm run generate -- --out ./output --seed 42 --length 6 --frames 12 --bay-mode a
 export function parseCLI(args) {
   return parseArgs({ args, options: {
     ...Object.fromEntries(['config', 'out', 'seed', 'count', 'length', 'frames', 'layers', 'bay-mode', 'bay-width', 'capture', 'yaw', 'pitch', 'jitter', 'empty', 'facings', 'depth', 'browser'].map(key => [key, { type: 'string' }])),
-    zip: { type: 'boolean', default: false }, help: { type: 'boolean', default: false },
+    zip: { type: 'boolean', default: false }, 'training-gt': { type: 'boolean', default: false }, help: { type: 'boolean', default: false },
   }}).values;
 }
 
@@ -78,5 +79,5 @@ export function resolveCLI(values, config = {}) {
   }
   createSweepPlan(seed, options); // Validate before starting Chromium or creating output files.
   if (!values.out?.trim()) throw Error('请使用 --out 指定新的输出目录');
-  return { seed, count, options, out: values.out, zip: values.zip, browser: values.browser };
+  return { seed, count, options, out: values.out, zip: values.zip, trainingGT: values['training-gt'], browser: values.browser };
 }

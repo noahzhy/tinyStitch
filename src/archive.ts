@@ -44,7 +44,7 @@ export function makeZip(files: ArchiveFile[]) {
 }
 
 export function sequenceFiles(sweep: Sweep): ArchiveFile[] {
-  const { frames, groundTruth, cameraGroundTruth, ...scene } = sweep;
+  const { frames, groundTruth, cameraGroundTruth, trainingGroundTruth, ...scene } = sweep;
   if (cameraGroundTruth.frames.length !== frames.length) throw Error("相机位姿 GT 与 RGB 帧数不一致");
   const width = 720, height = 960, focal = height / (2 * Math.tan(54 * Math.PI / 360));
   const json = (name: string, value: unknown) => ({ name, bytes: encoder.encode(JSON.stringify(value, null, 2)) });
@@ -56,6 +56,7 @@ export function sequenceFiles(sweep: Sweep): ArchiveFile[] {
     image("gt/coverage.png", groundTruth.coverageMask),
     json("gt/metadata.json", groundTruth.metadata),
     json("gt/camera_poses.json", cameraGroundTruth),
+    ...(trainingGroundTruth ? [json("gt/training.json", trainingGroundTruth)] : []),
     { name: "gt/camera_poses.csv", bytes: encoder.encode(cameraPoseCSV(cameraGroundTruth)) },
     json("generation/scene.json", scene),
     json("generation/config.json", { schemaVersion: 1, seed: sweep.store.seed, options: sweep.options }),

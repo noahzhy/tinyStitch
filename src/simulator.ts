@@ -7,8 +7,9 @@ import { shelfProducts, createMerchandising } from "./sim/structure";
 import { renderOrthographicGT, type OrthographicGT } from "./ground-truth";
 import { productLabel } from "./sim/products";
 import { captureCameraPose, cameraPoseGroundTruth, type CameraPoseGT, type CameraGroundTruth } from "./sim/camera-pose";
+import { trainingGroundTruth, type TrainingGroundTruth } from "./training-ground-truth";
 
-export type Sweep = SweepPlan & { frames: string[]; groundTruth: OrthographicGT; cameraGroundTruth: CameraGroundTruth };
+export type Sweep = SweepPlan & { frames: string[]; groundTruth: OrthographicGT; cameraGroundTruth: CameraGroundTruth; trainingGroundTruth?: TrainingGroundTruth };
 
 function labelMaterial(sku: SKU) {
   const random = rng(sku.labelSeed);
@@ -53,6 +54,7 @@ function addLabels(view: StoreRenderer, shelf: Shelf) {
       materials.set(p.skuId, material);
     }
     const label = productLabel(catalog.find(sku => sku.id === p.skuId)!, material, p.side);
+    label.userData = { shelfId: shelf.id, instanceId: p.id, kind: "product", skuId: p.skuId };
     label.position.add(new THREE.Vector3(p.x, p.y, p.z));
     group.add(label);
   }
@@ -64,7 +66,7 @@ function addLabels(view: StoreRenderer, shelf: Shelf) {
   };
 }
 
-export function makeSweep(view: StoreRenderer, seed: number, options: number | SweepOptions = 9): Sweep {
+export function makeSweep(view: StoreRenderer, seed: number, options: number | SweepOptions = 9, trainingGT = false): Sweep {
   const plan = createSweepPlan(seed, options);
   view.setStore(plan.store);
   const cleanup = addLabels(view, plan.shelf);
@@ -77,6 +79,7 @@ export function makeSweep(view: StoreRenderer, seed: number, options: number | S
       cameraPoses.push(captureCameraPose(view.camera, i, p.timestamp));
       return view.renderer.domElement.toDataURL("image/jpeg", 0.95);
     });
-    return { ...plan, frames, cameraGroundTruth: cameraPoseGroundTruth(cameraPoses), groundTruth: renderOrthographicGT(view, plan) };
+    return { ...plan, frames, cameraGroundTruth: cameraPoseGroundTruth(cameraPoses), groundTruth: renderOrthographicGT(view, plan),
+      ...(trainingGT ? { trainingGroundTruth: trainingGroundTruth(view, plan) } : {}) };
   } finally { cleanup(); }
 }

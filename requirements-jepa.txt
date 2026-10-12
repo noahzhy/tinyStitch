@@ -1,0 +1,9 @@
+# Tested on macOS arm64, Python 3.12; MPS training uses no CUDA packages.
+torch==2.4.1
+torchvision==0.19.1
+timm==1.0.12
+numpy==1.26.0
+Pillow==11.0.0
+opencv-python==4.10.0.84
+matplotlib==3.10.3
+pytest==8.3.5

@@ -3,3 +3,7 @@ dist/
 *.tsbuildinfo
 .DS_Store
 output/
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
