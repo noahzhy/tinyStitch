@@ -44,6 +44,7 @@ export class StoreRenderer {
     this.scene.add(light);
     for (const s of store.shelves) {
       const g = new THREE.Group();
+      g.userData = { shelfId: s.id, instanceId: `${s.id}/structure`, kind: "structure", skuId: "" };
       g.position.set(s.x, 0, s.z);
       g.rotation.y = -s.angle;
       const box = (
@@ -79,6 +80,7 @@ export class StoreRenderer {
           templates.set(p.skuId, template);
         }
         const item = template.clone();
+        item.userData = { shelfId: s.id, instanceId: p.id, kind: "product", skuId: p.skuId };
         item.position.set(p.x, p.y, p.z);
         g.add(item);
       }

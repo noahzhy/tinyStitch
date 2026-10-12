@@ -135,6 +135,7 @@ npm run generate -- \
 | `--facings N` / `MIN:MAX` | 2:5 | 同款连续列数 1–12，子货架末端可能截短 |
 | `--depth N` | 3 | 每列纵深容量 1–4；总容量还包含净空允许的上下堆叠层数，实际余货数随机为 0–总容量 |
 | `--zip` | 关闭 | 同时保存每组 `sequence.zip` |
+| `--training-gt` | 关闭 | 额外保存 `gt/training.json`：实际网格射线对应、物理实例及跨视角遮挡，仅作训练/评估监督；不改变 RGB 或拍摄路径 |
 | `--browser FILE` | 自动定位 Chrome | 指定 Chrome / Chromium 可执行文件 |
 | `--help` | — | 显示帮助 |
 
@@ -213,6 +214,8 @@ shelf-42/
 货架和商品位置单位为模拟米。子货架与商品使用货架局部坐标，`bay/layer/col/depthIndex/stackIndex` 从 0 开始，`stackIndex=0` 表示直接放在层板上；`side` 为 −1 或 +1。位姿使用 Three.js 世界坐标，Y 向上，相机朝局部 −Z，先 `lookAt` 再绕相机局部 +Z 应用滚转。
 
 同一种子和参数可以复现场景、库存、路径及时间戳。不同浏览器版本或 GPU 的最终像素可能存在细微差别。
+
+启用 `--training-gt` 时，按 24×32 像素中心网格在实际渲染网格（含曲面标签）上发射射线，并将命中的世界点投影到其他视角、再次检查最近表面的可见性。每点记录 `visible / occluded / outside / background`、两图像素、世界点、`instanceId`、`skuId`。背景不构造虚假的匹配。参考平面的 `coverage.png` 与这份真实表面可见性具有不同含义。训练导出文件也会包含在启用 `--zip` 的压缩包内。
 
 ## 相机真实世界 6D 位姿 GT
 

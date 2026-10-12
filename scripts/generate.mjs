@@ -33,10 +33,10 @@ async function main() {
       const seed = request.seed + i;
       const subdir = request.count === 1 ? '' : `seed-${seed}`;
       console.log(`生成 ${i + 1}/${request.count}，seed=${seed}`);
-      const rendered = await page.evaluate(({ seed, options }) => window.generateShelfCLI(seed, options), { seed, options: request.options });
+      const rendered = await page.evaluate(({ seed, options, trainingGT }) => window.generateShelfCLI(seed, options, trainingGT), { seed, options: request.options, trainingGT: request.trainingGT });
       const files = rendered.map(file => ({ name: file.name, bytes: Buffer.from(file.base64, 'base64') }));
       for (const file of files) {
-        if (!/^(rgb\/\d{4}\.jpg|gt\/(orthographic\.png|coverage\.png|metadata\.json|camera_poses\.(json|csv))|generation\/(scene|config)\.json|(intrinsics|timestamps|capture)\.json)$/.test(file.name)) throw Error(`无效输出文件：${file.name}`);
+        if (!/^(rgb\/\d{4}\.jpg|gt\/(orthographic\.png|coverage\.png|metadata\.json|training\.json|camera_poses\.(json|csv))|generation\/(scene|config)\.json|(intrinsics|timestamps|capture)\.json)$/.test(file.name)) throw Error(`无效输出文件：${file.name}`);
         const path = join(staging, subdir, file.name);
         await mkdir(dirname(path), { recursive: true });
         await writeFile(path, file.bytes, { flag: 'wx' });
